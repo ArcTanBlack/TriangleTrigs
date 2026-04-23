@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Triangle Geometry Inspector</title>
+<style>
+body {
+    font-family: sans-serif;
+    display:flex;
+    gap:20px;
+}
+canvas {
+    border:2px solid #333;
+}
+#panel {
+    width:260px;
+    font-size:13px;
+}
+.item {
+    padding:4px;
+    cursor:pointer;
+    border-bottom:1px solid #eee;
+}
+.item:hover {
+    background:#f0f0f0;
+}
+.active {
+    background:#ffeaa7 !important;
+}
+h4 { margin:10px 0 5px; }
+</style>
+</head>
+<body>
+
+<div>
+<input type="range" id="angleSlider" min="30" max="90" value="70" style="width:800px">
+<br>
+<canvas id="c" width="900" height="650"></canvas>
+</div>
+
+<div id="panel">
+<h3>Layers</h3>
+<label><input type="checkbox" checked id="L_triangle"> Triangle</label><br>
+<label><input type="checkbox" checked id="L_bisector"> Bisector CF</label><br>
+<label><input type="checkbox" checked id="L_incenter"> I Connections</label><br>
+<label><input type="checkbox" checked id="L_perp"> I ⟂ Edges</label><br>
+<label><input type="checkbox" checked id="L_alt"> Altitudes</label><br>
+<label><input type="checkbox" checked id="L_circles"> Circles</label>
+
+<h3>Key</h3>
+<div id="key"></div>
+</div>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const slider = document.getElementById("angleSlider");
+const keyDiv = document.getElementById("key");
+
+let elements = []; // unified registry
+let hovered = null;
+let mouse = {x:0,y:0};
+
+const toRad = d=>d*Math.PI/180;
+
+// ---------- HELPERS ----------
+function midpoint(a,b){return {x:(a.x+b.x)/2,y:(a.y+b.y)/2};}
+
+function addElement(obj){
+    elements.push(obj);
+}
+
+function drawCircle(p1,p2,color,name){
+    if(!document.getElementById("L_circles").checked) return;
+
+    const cx=(p1.x+p2.x)/2;
+    const cy=(p1.y+p2.y)/2;
+    const r=Math.hypot(p2.x-p1.x,p2.y-p1.y)/2;
+
+    ctx.beginPath();
+    ctx.arc(cx,cy,r,0,Math.PI*2);
+
+    ctx.strokeStyle = (hovered===name) ? "red" : color;
+    ctx.globalAlpha=0.15;
+    ctx.stroke();
+    ctx.globalAlpha=1;
+
+    addElement({type:"circle",name,p1,p2,cx,cy,r});
+}
+
+function drawLine(p1,p2,name,color,layer){
+    if(!document.getElementById(layer).checked) return;
+
+    ctx.beginPath();
+    ctx.moveTo(p1.x,p1.y);
+    ctx.lineTo(p2.x,p2.y);
+
+    ctx.strokeStyle = (hovered===name) ? "red" : color;
+    ctx.lineWidth = (hovered===name)?3:1.5;
+    ctx.stroke();
+
+    const m = midpoint(p1,p2);
+    ctx.fillText(name,m.x+4,m.y+4);
+
+    addElement({type:"line",name,p1,p2});
+    drawCircle(p1,p2,color,name+"_circle");
+}
+
+function foot(P,A,B){
+    const APx=P.x-A.x, APy=P.y-A.y;
+    const ABx=B.x-A.x, ABy=B.y-A.y;
+    const t=(APx*ABx+APy*ABy)/(ABx*ABx+ABy*ABy);
+    return {x:A.x+t*ABx,y:A.y+t*ABy};
+}
+
+function distToSegment(p,v,w){
+    const l2=(w.x-v.x)**2+(w.y-v.y)**2;
+    let t=((p.x-v.x)*(w.x-v.x)+(p.y-v.y)*(w.y-v.y))/l2;
+    t=Math.max(0,Math.min(1,t));
+    const proj={x:v.x+t*(w.x-v.x),y:v.y+t*(w.y-v.y)};
+    return Math.hypot(p.x-proj.x,p.y-proj.y);
+}
+
+// ---------- DRAW ----------
+function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    elements = [];
+
+    const aA=+slider.value, aC=60, aB=180-aA-aC;
+
+    const A={x:150,y:520};
+    const B={x:750,y:520};
+    const side_c=600;
+
+    const rA=toRad(aA), rB=toRad(aB), rC=toRad(aC);
+
+    const side_b=(side_c*Math.sin(rB))/Math.sin(rC);
+    const side_a=(side_c*Math.sin(rA))/Math.sin(rC);
+
+    const C={
+        x:A.x+side_b*Math.cos(rA),
+        y:A.y-side_b*Math.sin(rA)
+    };
+
+    const p=side_a+side_b+side_c;
+
+    const I={
+        x:(side_a*A.x+side_b*B.x+side_c*C.x)/p,
+        y:(side_a*A.y+side_b*B.y+side_c*C.y)/p
+    };
+
+    const F={
+        x:(side_a*A.x+side_b*B.x)/(side_a+side_b),
+        y:A.y
+    };
+
+    function getInt(p1,p2,p3,p4){
+        const d=(p4.y-p3.y)*(p2.x-p1.x)-(p4.x-p3.x)*(p2.y-p1.y);
+        const u=((p4.x-p3.x)*(p1.y-p3.y)-(p4.y-p3.y)*(p1.x-p3.x))/d;
+        return {x:p1.x+u*(p2.x-p1.x),y:p1.y+u*(p2.y-p1.y)};
+    }
+
+    const D=getInt(A,C,B,I);
+    const E=getInt(B,C,A,I);
+
+    const Pab=foot(I,A,B);
+    const Pbc=foot(I,B,C);
+    const Pca=foot(I,C,A);
+
+    const Ha=foot(A,B,C);
+    const Hb=foot(B,A,C);
+    const Hc=foot(C,A,B);
+
+    ctx.font="12px sans-serif";
+
+    // ---- DRAW ----
+    drawLine(A,B,"AB","#000","L_triangle");
+    drawLine(B,C,"BC","#000","L_triangle");
+    drawLine(C,A,"CA","#000","L_triangle");
+
+    drawLine(C,F,"CF","#2c3e50","L_bisector");
+
+    drawLine(I,A,"IA","purple","L_incenter");
+    drawLine(I,B,"IB","purple","L_incenter");
+    drawLine(I,C,"IC","purple","L_incenter");
+
+    drawLine(A,D,"AD","#e74c3c","L_bisector");
+    drawLine(B,E,"BE","#e74c3c","L_bisector");
+
+    drawLine(D,I,"DI","#27ae60","L_incenter");
+    drawLine(E,I,"EI","#f39c12","L_incenter");
+
+    drawLine(I,Pab,"I⊥AB","orange","L_perp");
+    drawLine(I,Pbc,"I⊥BC","orange","L_perp");
+    drawLine(I,Pca,"I⊥CA","orange","L_perp");
+
+    drawLine(A,Ha,"A⊥BC","#8e44ad","L_alt");
+    drawLine(B,Hb,"B⊥CA","#8e44ad","L_alt");
+    drawLine(C,Hc,"C⊥AB","#8e44ad","L_alt");
+
+    buildKey();
+}
+
+// ---------- KEY PANEL ----------
+function buildKey(){
+    keyDiv.innerHTML="";
+    elements.forEach(el=>{
+        const div=document.createElement("div");
+        div.className="item";
+        div.textContent=el.name;
+
+        if(hovered===el.name) div.classList.add("active");
+
+        div.onmouseenter=()=>{
+            hovered=el.name;
+            draw();
+        };
+        div.onmouseleave=()=>{
+            hovered=null;
+            draw();
+        };
+
+        keyDiv.appendChild(div);
+    });
+}
+
+// ---------- MOUSE ----------
+canvas.addEventListener("mousemove",(e)=>{
+    const rect=canvas.getBoundingClientRect();
+    mouse.x=e.clientX-rect.left;
+    mouse.y=e.clientY-rect.top;
+
+    hovered=null;
+    let min=Infinity;
+
+    elements.forEach(el=>{
+        if(el.type==="line"){
+            const d=distToSegment(mouse,el.p1,el.p2);
+            if(d<6 && d<min){
+                min=d;
+                hovered=el.name;
+            }
+        }
+    });
+
+    draw();
+});
+
+slider.oninput=draw;
+draw();
+</script>
+
+</body>
+</html>
